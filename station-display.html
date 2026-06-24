@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ISI Steel — Check-in Station</title>
+<style>
+  :root{
+    --ironclad:#011e41; --apex:#004a98; --blaze:#e0592a;
+    --green:#2c9942; --foundation:#dce3eb; --sky:#85b7eb;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--ironclad);
+    font-family:"ABC Ginto","Segoe UI",system-ui,-apple-system,sans-serif;
+    color:var(--foundation);
+    display:flex;align-items:center;justify-content:center;
+    min-height:100vh;padding:24px;
+  }
+  .kiosk{width:100%;max-width:420px;text-align:center}
+  .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .brand{font-size:22px;font-weight:600;color:#fff;letter-spacing:.3px}
+  .brand .sep{color:var(--blaze);padding:0 5px}
+  .live{display:flex;align-items:center;gap:8px;font-size:12px;color:#5DCAA5;
+        font-weight:600;letter-spacing:.8px;text-transform:uppercase}
+  .live .dot{width:9px;height:9px;border-radius:50%;background:var(--green);
+             transition:opacity .4s}
+  .station{font-size:15px;color:var(--sky);text-align:left;margin-bottom:22px}
+  .qrcard{background:#fff;border-radius:20px;padding:22px;aspect-ratio:1/1;
+          display:flex;align-items:center;justify-content:center}
+  #qr{display:flex;align-items:center;justify-content:center}
+  #qr img,#qr canvas{width:100%!important;height:auto!important}
+  .barwrap{height:8px;background:rgba(255,255,255,.12);border-radius:4px;
+           overflow:hidden;margin-top:26px}
+  .bar{height:100%;width:100%;background:var(--apex);border-radius:4px}
+  .metarow{display:flex;justify-content:space-between;align-items:baseline;margin-top:14px}
+  .cd{font-size:15px;color:var(--foundation)}
+  .cd b{color:#fff;font-weight:600}
+  .tok{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:14px;
+       color:var(--sky);letter-spacing:3px}
+  .instr{margin-top:28px;font-size:15px;color:#9fb6cf;line-height:1.6}
+</style>
+</head>
+<body>
+  <div class="kiosk">
+    <div class="head">
+      <div class="brand">ISI<span class="sep">·</span>Steel</div>
+      <div class="live"><span class="dot" id="dot"></span>Live</div>
+    </div>
+    <div class="station" id="station">GVM plant — Gate 1</div>
+    <div class="qrcard"><div id="qr"></div></div>
+    <div class="barwrap"><div class="bar" id="bar"></div></div>
+    <div class="metarow">
+      <div class="cd">Refreshes in <b id="secs">30</b>s</div>
+      <div class="tok" id="tok">······</div>
+    </div>
+    <div class="instr">Open the ISI Attend app and scan to check in</div>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+/*
+  STANDALONE TRIAL MODE
+  ---------------------
+  This page computes the TOTP token in the browser so it runs with no backend.
+  That is fine for trying it out, but in PRODUCTION the secret must NEVER live
+  on the display. Instead, replace getToken() with a fetch to your server:
+
+      const r = await fetch(`/api/station/${LOC}`, { cache: 'no-store' });
+      const { payload, expiresIn } = await r.json();
+      // render `payload` as the QR; use `expiresIn` for the countdown.
+
+  The server (see api-station-route.ts) holds the secret and generates the
+  token with otplib. The display just shows what it is handed.
+*/
+const PERIOD = 30;
+const SECRET = 'ISI-GVM-GATE1-DEMO';   // trial only — real secret stays server-side
+const LOC    = 'GVM1';
+
+const qrEl   = document.getElementById('qr');
+const barEl  = document.getElementById('bar');
+const secsEl = document.getElementById('secs');
+const tokEl  = document.getElementById('tok');
+const dot    = document.getElementById('dot');
+let lastCounter = -1;
+
+async function getToken() {
+  const counter = Math.floor(Date.now() / 1000 / PERIOD);
+  const buf = new ArrayBuffer(8);
+  new DataView(buf).setUint32(4, counter);                 // 8-byte counter, RFC 4226
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(SECRET),
+    { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, buf));
+  const off = sig[19] & 0x0f;                              // dynamic truncation
+  const bin = ((sig[off] & 0x7f) << 24) | (sig[off + 1] << 16)
+            | (sig[off + 2] << 8) | sig[off + 3];
+  return { token: (bin % 1_000_000).toString().padStart(6, '0'), counter };
+}
+
+function renderQR(text) {
+  qrEl.innerHTML = '';
+  new QRCode(qrEl, {
+    text, width: 260, height: 260,
+    colorDark: '#011e41', colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
+}
+
+async function tick() {
+  const now = Math.floor(Date.now() / 1000);
+  const remaining = PERIOD - (now % PERIOD);
+  secsEl.textContent = remaining;
+  barEl.style.width = (remaining / PERIOD * 100) + '%';
+  dot.style.opacity = (now % 2 === 0) ? '1' : '0.35';
+
+  const { token, counter } = await getToken();
+  if (counter !== lastCounter) {
+    lastCounter = counter;
+    renderQR(`https://attend.isisteel.com/scan?loc=${LOC}&t=${token}`);
+    tokEl.textContent = token;
+  }
+}
+
+(function start() {
+  if (typeof QRCode === 'undefined') return setTimeout(start, 80);
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
